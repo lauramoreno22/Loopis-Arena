@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no" />
+<title>Loopis Arena</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>" />
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800&display=swap');
+  * { -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; overscroll-behavior: none; }
+  .f-display { font-family: 'Fredoka', sans-serif; }
+  .f-body { font-family: 'Nunito', sans-serif; }
+  @keyframes bounceIn { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
+  @keyframes shakeX { 0%,100% { transform: translateX(0); } 20% { transform: translateX(-8px); } 40% { transform: translateX(8px); } 60% { transform: translateX(-6px); } 80% { transform: translateX(6px); } }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+  .anim-bounce { animation: bounceIn 0.5s ease; }
+  .anim-shake { animation: shakeX 0.45s ease; }
+  .anim-slide { animation: slideIn 0.35s ease; }
+</style>
+</head>
+<body class="f-body">
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback, useRef } = React;
+
+const STORAGE_KEY = "loopis-arena-web";
+const ONBOARDING_KEY = "loopis-arena-onboarding-seen";
+const GOAL_THRESHOLD = 30;
+
+const HABITS = [
+  { id: "h1", name: "Fui al gym antes de 7:00 AM", icon: "🏋️", type: "positive", points: 55, condition: "before_9am", photoBonus: 5 },
+  { id: "h2", name: "Fui al gym", icon: "🏋️", type: "positive", points: 40, photoBonus: 5 },
+  { id: "h3", name: "Tomé 2 litros de agua", icon: "💧", type: "positive", points: 20 },
+  { id: "h4", name: "Trabajé en proyecto personal 30 min", icon: "💻", type: "positive", points: 30 },
+  { id: "h5", name: "Leí 15 minutos", icon: "📖", type: "positive", points: 20 },
+  { id: "h6", name: "Ayer me dormí antes de las 11pm", icon: "🌙", type: "positive", points: 10 },
+  { id: "h7", name: "Hice una oración antes de dormir", icon: "🙏", type: "positive", points: 25 },
+  { id: "n1", name: "Comí postre no saludable", icon: "🍩", type: "negative", points: 9 },
+  { id: "n2", name: "Me acosté después de las 11pm", icon: "🌃", type: "negative", points: 5 },
+  { id: "n3", name: "No fui al gym", icon: "🚫", type: "negative", points: 50 },
+  { id: "n4", name: "Tomé alcohol entre semana", icon: "🍺", type: "negative", points: 20 },
+  { id: "n5", name: "Comí comida rápida", icon: "🍔", type: "negative", points: 30 },
+  { id: "n6", name: "Vape", icon: "💨", type: "negative", points: 5 },
+  { id: "n7", name: "Drugs", icon: "⚠️", type: "negative", points: 5 },
+  { id: "n8", name: "Tomar gaseosa", icon: "🥤", type: "negative", points: 5 },
+];
+
+const FRIENDS = [
+  { username: "camilo", emoji: "🦊" },
+  { username: "vale", emoji: "🐨" },
+  { username: "santi", emoji: "🐼" },
+];
+
+const AVATAR_OPTIONS = ["🦊", "🐨", "🐼", "🦁", "🐸", "🐙", "🐝", "🦄", "🐢", "🦥"];
+
+const SLIDES = [
+  { title: "¡Bienvenido a Loopis Arena! ⚡", subtitle: "Este es tu espacio para transformar tus hábitos en victorias, tomar consciencia de tu día y alcanzar tu máximo potencial.", button: "Siguiente", accent: "#7B61FF", bg: "#F3F0FF" },
+  { title: "Reglas del Juego 🎯", subtitle: "Gana puntos cumpliendo metas (+15 pts) y evita las distracciones (−10 pts).", button: "Siguiente", accent: "#16C79A", bg: "#E4F9EE" },
+  { title: "Competencia 🏆", subtitle: "Compite en el ranking semanal con tus amigos y demuestra quién manda en la Arena.", button: "¡Empezar a Jugar!", accent: "#FFC93C", bg: "#FFF3D6" },
+];
+
+function pad(n) { return String(n).padStart(2, "0"); }
+function toISO(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+function todayISO() { return toISO(new Date()); }
+function timeAgo(ts) {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 5) return "justo ahora";
+  if (s < 60) return `hace ${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `hace ${m} min`;
+  return `hace ${Math.floor(m / 60)} h`;
+}
+function isHabitVisible(h, now) {
+  if (h.condition !== "before_9am") return true;
+  const limit = new Date(now);
+  limit.setHours(9, 0, 0, 0);
+  return now.getTime() < limit.getTime();
+}
+function buildMockHistory() {
+  const history = {};
+  const base = new Date();
+  const samples = [62, 38, -20, 45, 10, -55, 33, 5, 70, -15];
+  samples.forEach((net, i) => {
+    const d = new Date(base);
+    d.setDate(base.getDate() - (i + 1));
+    history[toISO(d)] = {
+      net,
+      items: net >= 0
+        ? [{ name: "Fui al gym", icon: "🏋️", type: "positive", points: Math.min(55, Math.abs(net)) }]
+        : [{ name: "No fui al gym", icon: "🚫", type: "negative", points: 50 }],
+    };
+  });
+  return history;
+}
+function loadLocal(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+function saveLocal(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {}
+}
+
+function App() {
+  const [onboardingDone, setOnboardingDone] = useState(() => Boolean(localStorage.getItem(ONBOARDING_KEY)));
+  const [slide, setSlide] = useState(0);
+  const [tab, setTab] = useState("hoy");
+  const [profile, setProfile] = useState(() => loadLocal(STORAGE_KEY + ":profile", { username: "amigo", emoji: "🐨", badge: null }));
+  const [doneToday, setDoneToday] = useState(() => {
+    const saved = loadLocal(STORAGE_KEY + ":done", null);
+    return saved && saved.date === todayISO() ? saved.doneToday : {};
+  });
+  const [feed, setFeed] = useState([]);
+  const [pulse, setPulse] = useState({});
+  const [photoPending, setPhotoPending] = useState({});
+  const [autoPenaltyApplied, setAutoPenaltyApplied] = useState(() => {
+    const saved = loadLocal(STORAGE_KEY + ":done", null);
+    return Boolean(saved && saved.date === todayISO() && saved.autoPenaltyApplied);
+  });
+  const [selectedDay, setSelectedDay] = useState(null);
+  const [, forceTick] = useState(0);
+  const feedIdRef = useRef(0);
+  const mockHistoryRef = useRef(buildMockHistory());
+  const fileInputRef = useRef(null);
+  const activeUploadHabitId = useRef(null);
+  const now = new Date();
+
+  useEffect(() => { saveLocal(STORAGE_KEY + ":profile", profile); }, [profile]);
+  useEffect(() => {
+    saveLocal(STORAGE_KEY + ":done", { doneToday, autoPenaltyApplied, date: todayISO() });
+  }, [doneToday, autoPenaltyApplied]);
+
+  useEffect(() => {
+    const t = setInterval(() => forceTick((n) => n + 1), 10000);
+    return () => clearInterval(t);
+  }, []);
+
+  const finishOnboarding = () => {
+    localStorage.setItem(ONBOARDING_KEY, "true");
+    setOnboardingDone(true);
+  };
+
+  const pushFeedItem = useCallback((item) => {
+    feedIdRef.current += 1;
+    setFeed((prev) => [{ ...item, id: feedIdRef.current, ts: Date.now() }, ...prev].slice(0, 10));
+  }, []);
+
+  useEffect(() => {
+    if (!onboardingDone) return;
+    pushFeedItem({ username: FRIENDS[1].username, emoji: FRIENDS[1].emoji, habit: HABITS[2], hasPhoto: false });
+    const interval = setInterval(() => {
+      const friend = FRIENDS[Math.floor(Math.random() * FRIENDS.length)];
+      const eligible = HABITS.filter((h) => isHabitVisible(h, new Date()));
+      const habit = eligible[Math.floor(Math.random() * eligible.length)];
+      const hasPhoto = (habit.id === "h1" || habit.id === "h2") && Math.random() > 0.5;
+      pushFeedItem({ username: friend.username, emoji: friend.emoji, habit, hasPhoto });
+    }, 9000);
+    return () => clearInterval(interval);
+  }, [onboardingDone, pushFeedItem]);
+
+  useEffect(() => {
+    if (!onboardingDone || autoPenaltyApplied) return;
+    const check = () => {
+      const n = new Date();
+      const wentToGym = Boolean(doneToday.h1) || Boolean(doneToday.h2);
+      if (n.getHours() >= 22 && !wentToGym) {
+        const noGymHabit = HABITS.find((h) => h.id === "n3");
+        setDoneToday((prev) => ({ ...prev, n3: {} }));
+        pushFeedItem({ username: profile.username, emoji: profile.emoji, badge: profile.badge, habit: noGymHabit, automatic: true, self: true });
+        setAutoPenaltyApplied(true);
+      }
+    };
+    check();
+    const t = setInterval(check, 30000);
+    return () => clearInterval(t);
+  }, [onboardingDone, autoPenaltyApplied, doneToday, profile, pushFeedItem]);
+
+  const triggerPhotoUpload = (habitId) => {
+    activeUploadHabitId.current = habitId;
+    fileInputRef.current?.click();
+  };
+  const handleFileSelected = (e) => {
+    const file = e.target.files && e.target.files[0];
+    const habitId = activeUploadHabitId.current;
+    if (file && habitId) {
+      const url = URL.createObjectURL(file);
+      setPhotoPending((prev) => ({ ...prev, [habitId]: url }));
+    }
+    e.target.value = "";
+  };
+  const removePhoto = (habitId) => {
+    setPhotoPending((prev) => { const next = { ...prev }; delete next[habitId]; return next; });
+  };
+
+  const toggleHabit = (habit) => {
+    const isDone = Boolean(doneToday[habit.id]);
+    if (!isDone) {
+      setPulse((p) => ({ ...p, [habit.id]: habit.type === "positive" ? "bounce" : "shake" }));
+      setTimeout(() => setPulse((p) => ({ ...p, [habit.id]: null })), 550);
+      const photoUrl = photoPending[habit.id] || null;
+      pushFeedItem({ username: profile.username, emoji: profile.emoji, badge: profile.badge, habit, hasPhoto: Boolean(photoUrl), photoUrl, self: true });
+      setDoneToday((prev) => ({ ...prev, [habit.id]: { hasPhoto: Boolean(photoUrl), photoUrl } }));
+    } else {
+      setDoneToday((prev) => { const next = { ...prev }; delete next[habit.id]; return next; });
+    }
+  };
+
+  const visibleHabits = HABITS.filter((h) => isHabitVisible(h, now));
+  const totals = visibleHabits.reduce((acc, h) => {
+    const log = doneToday[h.id];
+    if (!log) return acc;
+    const bonus = log.hasPhoto && h.photoBonus ? h.photoBonus : 0;
+    const pts = h.points + bonus;
+    if (h.type === "positive") acc.positive += pts; else acc.negative += pts;
+    return acc;
+  }, { positive: 0, negative: 0 });
+  const net = totals.positive - totals.negative;
+  const isAlert = net < 0;
+  const dayLabel = net > 45 ? "Día Perfecto 🌟" : net >= 30 ? "Día Bueno 💪" : net >= 1 ? "Día Regular 🙂" : "Día Crítico 🔴";
+
+  const hiddenFileInput = (
+    <input ref={fileInputRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={handleFileSelected} />
+  );
+
+  if (!onboardingDone) {
+    const s = SLIDES[slide];
+    return (
+      <div className="min-h-screen w-full flex flex-col justify-between f-body" style={{ background: s.bg }}>
+        <div className="flex-1 flex flex-col items-center justify-center px-8 text-center">
+          <h1 className="f-display font-bold text-[22px] mb-3" style={{ color: s.accent }}>{s.title}</h1>
+          <p className="text-[14px] text-[#4A4660] leading-relaxed max-w-xs">{s.subtitle}</p>
+        </div>
+        <div className="flex justify-center gap-1.5 mb-5">
+          {SLIDES.map((_, i) => (
+            <div key={i} className="h-2 rounded-full transition-all" style={{ width: i === slide ? 22 : 8, background: i === slide ? s.accent : "#D9D4EF" }} />
+          ))}
+        </div>
+        <div className="px-8 pb-8">
+          <button onClick={() => (slide < SLIDES.length - 1 ? setSlide(slide + 1) : finishOnboarding())} className="w-full py-4 rounded-2xl text-white f-display font-semibold text-[15px] shadow-sm" style={{ background: s.accent }}>
+            {s.button}
+          </button>
+          {slide < SLIDES.length - 1 && (
+            <button onClick={finishOnboarding} className="w-full text-center mt-3 text-[12px] text-[#A29BC7] font-semibold">Saltar</button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const calendarData = { ...mockHistoryRef.current };
+  const todayItems = Object.entries(doneToday).map(([id, log]) => {
+    const h = HABITS.find((hh) => hh.id === id);
+    const bonus = log.hasPhoto && h.photoBonus ? h.photoBonus : 0;
+    return { name: h.name, icon: h.icon, type: h.type, points: h.points + bonus, photoUrl: log.photoUrl };
+  });
+  calendarData[todayISO()] = { net, items: todayItems };
+
+  const monthDate = new Date();
+  const year = monthDate.getFullYear();
+  const month = monthDate.getMonth();
+  const firstDay = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const startWeekday = firstDay.getDay();
+  const cells = [...Array(startWeekday).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
+
+  return (
+    <div className="min-h-screen w-full" style={{ background: "linear-gradient(180deg, #FAF7FF 0%, #F3F0FF 100%)" }}>
+      {hiddenFileInput}
+      <div className="max-w-md mx-auto px-5 pt-6 pb-24 f-body">
+        <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center gap-2.5">
+            <div className="relative">
+              <div className="w-11 h-11 rounded-full flex items-center justify-center text-xl shadow-sm" style={{ background: "#7B61FF22", border: "2px solid #7B61FF" }}>{profile.emoji}</div>
+              {profile.badge === "corona_oro" && <span className="absolute -top-2 -right-1 text-sm">👑</span>}
+            </div>
+            <div>
+              <p className="f-display font-semibold text-[15px] text-[#2D2A4A]">@{profile.username}</p>
+              <p className="text-[11px] text-[#8C86B0]">Loopis Arena</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1 bg-[#FFF3D6] px-2.5 py-1 rounded-full">
+            <span className="text-sm">🔥</span>
+            <span className="f-display text-[12px] font-semibold text-[#8A5A00]">4</span>
+          </div>
+        </div>
+
+        {tab === "hoy" && (
+          <React.Fragment>
+            <div className="rounded-3xl p-5 mb-5 text-center shadow-sm transition-colors duration-300" style={{ background: isAlert ? "#FFE3DF" : "#E4F9EE", border: `2px solid ${isAlert ? "#FF6B5B" : "#16C79A"}` }}>
+              <p className="f-display font-bold text-[52px] leading-none" style={{ color: isAlert ? "#E4483A" : "#0FA574" }}>{net > 0 ? "+" : ""}{net}</p>
+              <p className="text-[13px] font-bold text-[#2D2A4A] mt-1">{dayLabel}</p>
+              <div className="flex justify-center gap-2 mt-3">
+                <span className="text-[11px] bg-white/70 px-2.5 py-1 rounded-full font-bold text-[#0FA574]">+{totals.positive} positivos</span>
+                <span className="text-[11px] bg-white/70 px-2.5 py-1 rounded-full font-bold text-[#E4483A]">−{totals.negative} negativos</span>
+              </div>
+              {autoPenaltyApplied && (
+                <p className="text-[10.5px] text-[#E4483A] font-bold mt-3">⏰ Penalización automática — no marcaste gym antes de las 10pm</p>
+              )}
+            </div>
+
+            <p className="f-display text-[13px] font-semibold text-[#8C86B0] uppercase tracking-wide mb-2">Súmale a tu día</p>
+            <div className="space-y-2 mb-5">
+              {visibleHabits.filter((h) => h.type === "positive").map((h) => (
+                <HabitRow key={h.id} habit={h} done={Boolean(doneToday[h.id])} hasPhoto={Boolean(doneToday[h.id] && doneToday[h.id].hasPhoto)} photoUrl={photoPending[h.id]} pulse={pulse[h.id]} onToggle={() => toggleHabit(h)} onUploadPhoto={() => triggerPhotoUpload(h.id)} onRemovePhoto={() => removePhoto(h.id)} />
+              ))}
+            </div>
+
+            <p className="f-display text-[13px] font-semibold text-[#8C86B0] uppercase tracking-wide mb-2">Cuidado con esto</p>
+            <div className="space-y-2">
+              {visibleHabits.filter((h) => h.type === "negative").map((h) => (
+                <HabitRow key={h.id} habit={h} done={Boolean(doneToday[h.id])} pulse={pulse[h.id]} onToggle={() => toggleHabit(h)} auto={h.id === "n3" && autoPenaltyApplied} />
+              ))}
+            </div>
+          </React.Fragment>
+        )}
+
+        {tab === "actividad" && (
+          <React.Fragment>
+            <p className="f-display text-[13px] font-semibold text-[#8C86B0] uppercase tracking-wide mb-3">Actividad del grupo</p>
+            <div className="space-y-2.5">
+              {feed.map((item) => (
+                <div key={item.id} className="anim-slide flex items-center gap-3 bg-white rounded-2xl p-3 shadow-sm">
+                  <div className="w-9 h-9 rounded-full flex items-center justify-center text-base bg-[#F3F0FF] flex-shrink-0">{item.emoji}</div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] text-[#2D2A4A] leading-snug">
+                      <span className="font-extrabold">@{item.username}</span> {item.automatic ? "no marcó gym antes de las 10pm →" : item.habit.type === "positive" ? "completó" : "registró"}{" "}
+                      <span className="font-bold">{item.habit.icon} {item.habit.name}</span>
+                      {item.automatic && <span className="ml-1 text-[10px] text-[#E4483A] font-extrabold">(automático)</span>}
+                    </p>
+                    <p className="text-[10.5px] text-[#A29BC7]">{timeAgo(item.ts)}</p>
+                  </div>
+                  {item.photoUrl ? (
+                    <img src={item.photoUrl} alt="evidencia" className="w-9 h-9 rounded-lg object-cover flex-shrink-0" />
+                  ) : item.hasPhoto ? (
+                    <span className="text-sm flex-shrink-0">📷</span>
+                  ) : null}
+                  <span className="text-[12px] font-extrabold px-2 py-0.5 rounded-full flex-shrink-0" style={{ background: item.habit.type === "positive" ? "#D9F3E2" : "#FBDAD5", color: item.habit.type === "positive" ? "#0FA574" : "#E4483A" }}>
+                    {item.habit.type === "positive" ? "+" : "−"}{item.habit.points + (item.hasPhoto && item.habit.photoBonus ? item.habit.photoBonus : 0)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </React.Fragment>
+        )}
+
+        {tab === "calendario" && (
+          <React.Fragment>
+            <p className="f-display text-[13px] font-semibold text-[#8C86B0] uppercase tracking-wide mb-3">Tu mes en Loopis Arena</p>
+            <div className="bg-white rounded-2xl p-4 shadow-sm">
+              <div className="grid grid-cols-7 gap-1.5 mb-2">
+                {["D", "L", "M", "M", "J", "V", "S"].map((d, i) => (
+                  <div key={i} className="text-center text-[10.5px] font-bold text-[#A29BC7]">{d}</div>
+                ))}
+              </div>
+              <div className="grid grid-cols-7 gap-1.5">
+                {cells.map((day, i) => {
+                  if (!day) return <div key={i} />;
+                  const dateObj = new Date(year, month, day);
+                  const iso = toISO(dateObj);
+                  const info = calendarData[iso];
+                  const isToday = iso === todayISO();
+                  const isGood = info && info.net >= GOAL_THRESHOLD;
+                  const hasData = Boolean(info);
+                  return (
+                    <button key={i} onClick={() => hasData && setSelectedDay(iso)} className="aspect-square rounded-lg flex items-center justify-center text-[12px] font-bold transition-transform active:scale-95" style={{ background: hasData ? (isGood ? "#D9F3E2" : "#FBDAD5") : "#F5F3FC", color: hasData ? (isGood ? "#0FA574" : "#E4483A") : "#C9C3E8", border: isToday ? "2px solid #7B61FF" : "2px solid transparent" }}>
+                      {day}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="flex justify-center gap-5 mt-4">
+              <div className="flex items-center gap-1.5">
+                <div className="w-3.5 h-3.5 rounded" style={{ background: "#D9F3E2", border: "1.5px solid #0FA574" }} />
+                <span className="text-[11px] font-semibold text-[#4A4660]">Día Bueno (≥{GOAL_THRESHOLD} pts)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-3.5 h-3.5 rounded" style={{ background: "#FBDAD5", border: "1.5px solid #E4483A" }} />
+                <span className="text-[11px] font-semibold text-[#4A4660]">Día Malo</span>
+              </div>
+            </div>
+          </React.Fragment>
+        )}
+
+        {tab === "perfil" && (
+          <div className="bg-white rounded-2xl p-5 shadow-sm">
+            <p className="f-display text-[13px] font-semibold text-[#8C86B0] uppercase tracking-wide mb-3">Tu nombre</p>
+            <input
+              value={profile.username}
+              onChange={(e) => setProfile((p) => ({ ...p, username: e.target.value.replace(/\s/g, "").toLowerCase() }))}
+              className="w-full mb-5 px-3 py-2.5 rounded-xl bg-[#F5F3FC] text-[14px] font-bold text-[#2D2A4A] outline-none"
+              placeholder="tu_usuario"
+            />
+            <p className="f-display text-[13px] font-semibold text-[#8C86B0] uppercase tracking-wide mb-3">Tu avatar</p>
+            <div className="flex flex-wrap gap-2">
+              {AVATAR_OPTIONS.map((emoji) => (
+                <button key={emoji} onClick={() => setProfile((p) => ({ ...p, emoji }))} className="w-11 h-11 rounded-full flex items-center justify-center text-xl transition-transform active:scale-95" style={{ background: profile.emoji === emoji ? "#7B61FF33" : "#F5F3FC", border: profile.emoji === emoji ? "2px solid #7B61FF" : "2px solid transparent" }}>
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {selectedDay && (
+        <div className="fixed inset-0 bg-black/40 flex items-end z-50" onClick={() => setSelectedDay(null)}>
+          <div className="w-full max-w-md mx-auto bg-white rounded-t-3xl p-5 anim-slide" onClick={(e) => e.stopPropagation()}>
+            <div className="w-10 h-1 rounded-full bg-[#E5E1F5] mx-auto mb-3" />
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-[12px] font-bold text-[#8C86B0]">{selectedDay}</p>
+              <button onClick={() => setSelectedDay(null)} className="text-[#A29BC7] text-lg">✕</button>
+            </div>
+            <p className="f-display font-bold text-[34px] text-center" style={{ color: calendarData[selectedDay] && calendarData[selectedDay].net >= 0 ? "#0FA574" : "#E4483A" }}>
+              {calendarData[selectedDay] && calendarData[selectedDay].net > 0 ? "+" : ""}{calendarData[selectedDay] ? calendarData[selectedDay].net : 0} pts
+            </p>
+            <div className="mt-3 max-h-64 overflow-y-auto space-y-1">
+              {((calendarData[selectedDay] && calendarData[selectedDay].items) || []).map((item, i) => (
+                <div key={i} className="flex items-center gap-2.5 py-2 border-b border-[#F0EDF9]">
+                  {item.photoUrl ? <img src={item.photoUrl} alt="" className="w-8 h-8 rounded-lg object-cover" /> : <span className="text-lg">{item.icon}</span>}
+                  <span className="flex-1 text-[13px] font-semibold text-[#2D2A4A]">{item.name}</span>
+                  <span className="text-[13px] font-extrabold" style={{ color: item.type === "positive" ? "#0FA574" : "#E4483A" }}>{item.type === "positive" ? "+" : "−"}{item.points}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-[#EDEAF7]" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+        <div className="max-w-md mx-auto flex">
+          {[
+            { id: "hoy", label: "Hoy", icon: "☀️" },
+            { id: "actividad", label: "Actividad", icon: "⚡" },
+            { id: "calendario", label: "Calendario", icon: "📅" },
+            { id: "perfil", label: "Perfil", icon: "🙂" },
+          ].map((t) => (
+            <button key={t.id} onClick={() => setTab(t.id)} className="flex-1 flex flex-col items-center gap-0.5 py-2.5 f-display">
+              <span className="text-base">{t.icon}</span>
+              <span className="text-[10.5px] font-semibold" style={{ color: tab === t.id ? "#7B61FF" : "#A29BC7" }}>{t.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HabitRow({ habit, done, hasPhoto, photoUrl, pulse, onToggle, onUploadPhoto, onRemovePhoto, auto }) {
+  const isPositive = habit.type === "positive";
+  const canAttach = isPositive && habit.photoBonus && !done;
+  const showPhotoBadge = done && hasPhoto;
+  return (
+    <div className={`rounded-2xl overflow-hidden transition-colors ${pulse === "bounce" ? "anim-bounce" : ""} ${pulse === "shake" ? "anim-shake" : ""}`} style={{ background: done ? (isPositive ? "#E4F9EE" : "#FFE3DF") : "#FFFFFF", border: `2px solid ${done ? (isPositive ? "#16C79A" : "#FF6B5B") : "#EDEAF7"}` }}>
+      <button onClick={onToggle} disabled={auto} className="w-full flex items-center gap-3 px-3.5 py-3 text-left">
+        <span className="text-xl flex-shrink-0">{habit.icon}</span>
+        <span className={`flex-1 text-[13.5px] font-bold ${done ? "text-[#8C86B0] line-through" : "text-[#2D2A4A]"}`}>{habit.name}</span>
+        <span className="text-[12px] font-extrabold px-2 py-0.5 rounded-full flex-shrink-0" style={{ background: isPositive ? "#D9F3E2" : "#FBDAD5", color: isPositive ? "#0FA574" : "#E4483A" }}>
+          {isPositive ? "+" : "−"}{habit.points + (hasPhoto && habit.photoBonus ? habit.photoBonus : 0)}
+        </span>
+        <span className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-white text-xs font-bold" style={{ background: done ? (isPositive ? "#16C79A" : "#FF6B5B") : "transparent", border: done ? "none" : "2px solid #D9D4EF" }}>
+          {done ? "✓" : ""}
+        </span>
+      </button>
+      {canAttach && (
+        <div className="px-3.5 pb-3">
+          {photoUrl ? (
+            <div className="flex items-center gap-2 bg-[#F3F0FF] rounded-xl p-2">
+              <img src={photoUrl} alt="evidencia" className="w-10 h-10 rounded-lg object-cover" />
+              <span className="flex-1 text-[11.5px] font-bold text-[#7B61FF]">Foto lista · +{habit.photoBonus} pts al marcar</span>
+              <button onClick={onRemovePhoto} className="text-[#A29BC7] text-sm">✕</button>
+            </div>
+          ) : (
+            <button onClick={onUploadPhoto} className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-[12px] font-bold bg-[#F3F0FF] text-[#7B61FF]">
+              📷 Subir evidencia (+{habit.photoBonus} pts)
+            </button>
+          )}
+        </div>
+      )}
+      {showPhotoBadge && <div className="px-3.5 pb-3 text-[11px] font-bold text-[#0FA574]">🖼️ Evidencia adjunta · +{habit.photoBonus} pts de bonus</div>}
+      {auto && <div className="px-3.5 pb-3 text-[11px] font-bold text-[#E4483A]">⏰ Marcado automáticamente a las 10pm</div>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
